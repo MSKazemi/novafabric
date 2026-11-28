@@ -31,6 +31,10 @@ from typing import IO
 from pydantic import BaseModel, Field
 
 from novafabric._safe_path import is_safe_path_segment
+from novafabric.evidence_fabric._nats_names import (
+    DEFAULT_EVIDENCE_STREAM,
+    DEFAULT_EVIDENCE_SUBJECT,
+)
 
 
 class RebuildError(Exception):
@@ -111,8 +115,8 @@ def rebuild_from_events(
     events: Iterable[bytes],
     target_dir: Path,
     *,
-    stream: str = "nova-evidence",
-    subject: str = "nova.evidence.>",
+    stream: str = DEFAULT_EVIDENCE_STREAM,
+    subject: str = DEFAULT_EVIDENCE_SUBJECT,
 ) -> RebuildReport:
     """Route raw event payloads into per-run JSONL files under *target_dir*.
 
@@ -202,9 +206,11 @@ class OffsetReplayRebuilder:
         self._nats_url = nats_url or os.environ.get(
             "NOVA_NATS_URL", "nats://localhost:4222"
         )
-        self._stream = stream or os.environ.get("NOVA_NATS_STREAM", "nova-evidence")
+        self._stream = stream or os.environ.get(
+            "NOVA_NATS_STREAM", DEFAULT_EVIDENCE_STREAM
+        )
         self._subject = subject or os.environ.get(
-            "NOVA_NATS_SUBJECT", "nova.evidence.>"
+            "NOVA_NATS_SUBJECT", DEFAULT_EVIDENCE_SUBJECT
         )
         self._batch_size = batch_size
         self._idle_timeout_s = idle_timeout_s

@@ -12,7 +12,8 @@ Environment variables
 ``NOVA_NATS_URL``
     NATS server URL (default: ``nats://localhost:4222``).
 ``NOVA_NATS_STREAM``
-    JetStream stream name (default: ``nova-evidence``).
+    JetStream stream name (default: ``NOVA_EVIDENCE``, the stream the Go spool
+    forwarder creates).
 ``NOVA_NATS_SUBJECT``
     Subject filter for the consumer (default: ``nova.evidence.>``).
 ``NOVA_NATS_CONSUMER``
@@ -26,6 +27,11 @@ import json
 import logging
 import os
 from typing import Any
+
+from novafabric.evidence_fabric._nats_names import (
+    DEFAULT_EVIDENCE_STREAM,
+    DEFAULT_EVIDENCE_SUBJECT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -93,8 +99,8 @@ class NATSJetStreamConsumer:
 
         # Config from env
         self._nats_url = os.environ.get("NOVA_NATS_URL", "nats://localhost:4222")
-        self._stream_name = os.environ.get("NOVA_NATS_STREAM", "nova-evidence")
-        self._subject = os.environ.get("NOVA_NATS_SUBJECT", "nova.evidence.>")
+        self._stream_name = os.environ.get("NOVA_NATS_STREAM", DEFAULT_EVIDENCE_STREAM)
+        self._subject = os.environ.get("NOVA_NATS_SUBJECT", DEFAULT_EVIDENCE_SUBJECT)
         self._consumer_name = os.environ.get(
             "NOVA_NATS_CONSUMER", "nova-evidence-consumer"
         )
