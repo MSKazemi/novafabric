@@ -424,10 +424,14 @@ class PCCPExporter:
 # ISO42001Exporter — ISO/IEC 42001:2023 AI Management System
 # ---------------------------------------------------------------------------
 
-# Mapping of ISO 42001 clause numbers to control narratives
+# Mapping of ISO 42001 clause numbers to control narratives. ISO/IEC 42001 is
+# copyrighted: the clause number is the identifier, and each ``title`` is a short
+# NovaFabric summary of the clause's topic, never the standard's heading. Users who
+# need the official wording keep it in their own licensed copy (see the package
+# README). ``tests/compliance/test_no_licensed_standard_titles.py`` holds this.
 _ISO42001_CONTROLS: dict[str, dict[str, str]] = {
     "6.1": {
-        "title": "Actions to address risks and opportunities",
+        "title": "Planning that responds to AI risks",
         "narrative": (
             "NovaFabric captures every AI agent run as a signed capsule. "
             "Risk assessments are conducted at promotion time via Rego policy gates. "
@@ -435,14 +439,14 @@ _ISO42001_CONTROLS: dict[str, dict[str, str]] = {
         ),
     },
     "6.2": {
-        "title": "AI system objectives and planning",
+        "title": "Setting and tracking AI goals",
         "narrative": (
             "Objectives are defined per asset in the registry (asset_name, version, "
             "task_type). Capsule metadata records actual vs. expected behaviour."
         ),
     },
     "8.1": {
-        "title": "Operational planning and control",
+        "title": "Operating AI processes under control",
         "narrative": (
             "Runs are captured deterministically. Capsules include redaction "
             "proof, and OTel GenAI spans when requested; tool-permission events are "
@@ -451,21 +455,21 @@ _ISO42001_CONTROLS: dict[str, dict[str, str]] = {
         ),
     },
     "8.2": {
-        "title": "AI risk assessment process",
+        "title": "Assessing AI risks during operation",
         "narrative": (
             "Maker-checker approval enforces separation of duties for production "
             "promotion (ADR-0058). NovaSeal provides cryptographic non-repudiation."
         ),
     },
     "8.3": {
-        "title": "AI risk treatment",
+        "title": "Acting on identified AI risks",
         "narrative": (
             "WORM storage adapters (S3, Azure, GCS) enforce immutability of evidence. "
             "Secret scanning and PII redaction are applied before archival."
         ),
     },
     "9.1": {
-        "title": "Monitoring, measurement, analysis and evaluation",
+        "title": "Monitoring and evaluating performance",
         "narrative": (
             "Eval suites (GAIA, SWE-bench, AgentBench, MMLU, Smoke) are run at "
             "promotion time. Scores are stored in the capsule and compared against "
@@ -473,28 +477,28 @@ _ISO42001_CONTROLS: dict[str, dict[str, str]] = {
         ),
     },
     "9.2": {
-        "title": "Internal audit",
+        "title": "Self-checks of the management system",
         "narrative": (
             "Lineage graph records provenance of every asset version. "
             "The Evidence Bundle ZIP provides a signed audit trail per ADR-0011."
         ),
     },
     "9.3": {
-        "title": "Management review",
+        "title": "Leadership review of results",
         "narrative": (
             "NovaFabric's Annex IV exporter (cap-002) provides management-ready "
             "documentation covering all 15 mandatory EU AI Act elements."
         ),
     },
     "10.1": {
-        "title": "Continual improvement",
+        "title": "Improving the management system over time",
         "narrative": (
             "PCCP export (this module) documents planned modifications. "
             "Rollback is available via `nova rollback` for any production asset."
         ),
     },
     "10.2": {
-        "title": "Nonconformity and corrective action",
+        "title": "Handling failures and fixing their causes",
         "narrative": (
             "Tool-permission denied events, when a capsule carries them (this "
             "version does not capture them; see 8.1), are surfaced in NIS2 incident "
@@ -609,7 +613,9 @@ class ISO42001Exporter:
             "  capsule-index.json        — Capsule index for audit period\n"
             "  README.txt                — This file\n\n"
             f"Audit period: {self.period_start.date()} to {self.period_end.date()}\n"
-            f"Controls included: {', '.join(selected)}\n"
+            f"Controls included: {', '.join(selected)}\n\n"
+            "Clause numbers follow ISO/IEC 42001:2023. Each title is a short NovaFabric\n"
+            "summary, not the standard's wording; use your licensed copy for that.\n"
         )
 
         with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:

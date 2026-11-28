@@ -72,8 +72,8 @@ def test_copyrighted_profile_descriptions_are_short_summaries() -> None:
 
 
 def test_iso42001_profile_cites_only_clauses_that_exist() -> None:
-    # Clause 8 of ISO/IEC 42001:2023 ends at 8.4; continual improvement is 10.1
-    # (10.2 is nonconformity and corrective action).
+    # Clause 8 of ISO/IEC 42001:2023 ends at 8.4; improvement over time is 10.1
+    # (10.2 covers a different topic).
     ids = {c.id for c in load_profile("iso42001").controls}
     assert not any(i.startswith("ISO42-8.5") for i in ids)
     assert "ISO42-10.1-CONTINUAL-IMPROVEMENT" in ids
@@ -81,7 +81,9 @@ def test_iso42001_profile_cites_only_clauses_that_exist() -> None:
 
 
 def test_soc2_cc6_titles_match_their_criteria() -> None:
-    # CC6.6 covers threats from outside the system boundary; malicious software is CC6.8.
+    # CC6.6 covers threats from beyond the system boundary; malicious software is CC6.8.
     titles = {c.id: c.title for c in load_profile("soc2-type2").controls}
-    assert "malicious" not in titles["CC6.6-THREAT-MITIGATION"].lower()
-    assert "outside the system boundary" in titles["CC6.6-THREAT-MITIGATION"].lower()
+    title = titles["CC6.6-THREAT-MITIGATION"].lower()
+    assert "malicious" not in title
+    assert "boundary" in title
+    assert "external" in title

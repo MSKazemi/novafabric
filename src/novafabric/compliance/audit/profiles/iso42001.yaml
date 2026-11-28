@@ -6,7 +6,7 @@ version: "2023"
 # ISO text; load your licensed catalog with `--profile path.yaml` for the wording.
 controls:
   - id: ISO42-4.1-CONTEXT
-    title: Organisational context (§4.1)
+    title: Operating context of AI systems (§4.1)
     description: >
       Per-run records of the model calls each AI system made.
     evidence_requirements:
@@ -15,7 +15,7 @@ controls:
         description: Run capsules documenting AI system context and operational environment
 
   - id: ISO42-6.1-RISK-OPPORTUNITIES
-    title: Addressing risks and opportunities (§6.1)
+    title: Planning that responds to AI risks (§6.1)
     description: >
       Policy-decision records showing actions taken in response to risky requests.
     evidence_requirements:
@@ -24,7 +24,7 @@ controls:
         description: Policy decision events as evidence of risk-response actions
 
   - id: ISO42-7.4-COMMUNICATION
-    title: Communication (§7.4)
+    title: Reporting on AI system behaviour (§7.4)
     description: >
       A per-run record of model interactions that can support reporting on AI
       system behaviour.
@@ -34,7 +34,7 @@ controls:
         description: Run capsules providing communication audit trail for AI system
 
   - id: ISO42-7.5-DOCUMENTED-INFORMATION
-    title: Documented information (§7.5)
+    title: Keeping records of AI operation (§7.5)
     description: >
       Per-run records and, optionally, a seal that makes later changes to those
       records detectable.
@@ -63,7 +63,7 @@ controls:
         description: Lineage records for process traceability
 
   - id: ISO42-8.4-AI-SYSTEM-IMPACT
-    title: AI system impact assessment (§8.4)
+    title: Assessing effects on people (§8.4)
     description: >
       Policy decisions and, optionally, a personal-data redaction manifest that can
       feed an assessment of impacts on people.
@@ -89,14 +89,14 @@ controls:
         description: Lineage for tracing evaluation history
 
   - id: ISO42-10.1-CONTINUAL-IMPROVEMENT
-    title: Continual improvement (§10.1)
+    title: Improving over time (§10.1)
     description: >
       Historical run records and, optionally, policy decisions that support analysis
       of improvement over time.
     evidence_requirements:
       - evidence_type: model_calls
         required: true
-        description: Historical run capsules enabling continual improvement analysis
+        description: Historical run capsules for analysing improvement over time
       - evidence_type: policy_events
         required: false
         description: Policy decisions documenting improvement-driven changes
