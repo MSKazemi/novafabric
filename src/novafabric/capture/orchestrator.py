@@ -148,6 +148,9 @@ class CaptureResult:
     unsealed_reason: str | None = None
     #: The capsule's ``replayability.json``; ``None`` when none was written.
     replayability: dict[str, Any] | None = None
+    #: Spans written to ``otel-genai-spans.json`` (``emit_otel_genai``); ``None``
+    #: when emission was not requested or failed.
+    otel_genai_span_count: int | None = None
 
 
 class AssetStatusCheckError(Exception):
@@ -274,6 +277,10 @@ class CaptureOrchestrator:
             secret scanner.
         capture_media: Store multimodal media bytes, not only their digests
             (``--capture-media``).
+        emit_otel_genai: Write OTel GenAI spans to ``otel-genai-spans.json``
+            before sealing, so the seal covers them (``--emit-otel-genai``).
+        otel_capture_content: With *emit_otel_genai*, include redacted request
+            messages in the spans (``--capture-content``).
 
     Raises:
         CapsuleDirectoryError: *base_dir* cannot be created. No workload has
@@ -292,6 +299,8 @@ class CaptureOrchestrator:
         spool_dir: Path | None = None,
         masking_pipeline: Any | None = None,
         capture_media: bool = False,
+        emit_otel_genai: bool = False,
+        otel_capture_content: bool = False,
     ) -> None:
         self._base_dir = base_dir or (Path.cwd() / ".novafabric" / "runs")
         _chosen = "the -o/--output directory" if base_dir else "the default capsule directory"
@@ -341,6 +350,11 @@ class CaptureOrchestrator:
         # (--capture-media). Default off: MediaPart records reference metadata
         # only (content_hash + byte_size), per ADR-0021 §4 privacy-by-default.
         self._capture_media = capture_media
+        # NF-032/033 (ADR-0098): opt-in OTel GenAI spans, written inside the
+        # capsule before finalization so they are scanned and sealed like any
+        # other evidence file.
+        self._emit_otel_genai = emit_otel_genai
+        self._otel_capture_content = otel_capture_content
 
     @with_capsule_root_pins
     def run(
@@ -788,6 +802,15 @@ class CaptureOrchestrator:
         if self._mark_provenance and model_call_count > 0:
             _mark_content_provenance(capsule_dir)
 
+        # NF-032/033: the OTel GenAI spans are derived from capsule.yaml and the
+        # call streams, all final by now. Written before finalization, so the
+        # residual pass scans them and evidence_digests binds them to the seal.
+        otel_span_count: int | None = None
+        if self._emit_otel_genai:
+            otel_span_count = _emit_otel_genai_spans(
+                capsule_dir, capture_content=self._otel_capture_content
+            )
+
         # --- PII Detection Gate (cap-001 — OQ-01 unresolved, legal-hold mode) ---
         # If a PIIDetectionGate is configured, scan the manifest before sealing.
         # LEGAL-HOLD MODE: redacted capsules go to legal_hold/ staging, NOT sealed.
@@ -946,6 +969,7 @@ class CaptureOrchestrator:
             sealed=finalized.sealed,
             unsealed_reason=finalized.unsealed_reason,
             replayability=finalized.replayability,
+            otel_genai_span_count=otel_span_count,
         )
 
 
@@ -1023,6 +1047,40 @@ def _mark_content_provenance(capsule_dir: Path) -> None:
             f"[novafabric] ⚠ C2PA provenance marking failed (capsule is still valid): {exc}",
             file=_sys.stderr,
         )
+
+
+#: The capsule file ``--emit-otel-genai`` writes (NF-032).
+OTEL_GENAI_SPANS_REF = "otel-genai-spans.json"
+
+
+def _emit_otel_genai_spans(capsule_dir: Path, *, capture_content: bool) -> int | None:
+    """Write ``otel-genai-spans.json`` into *capsule_dir*; return the span count.
+
+    Called before the capsule is finalized, so the file is covered by the residual
+    secret pass and by ``evidence_digests`` (and therefore by the seal). Non-blocking:
+    a failure prints a warning and returns ``None`` -- span emission must never fail
+    the captured workload.
+    """
+    try:
+        import json as _json
+
+        from novafabric.otel.genai_emitter import emit_spans
+
+        spans = emit_spans(capsule_dir, capture_content=capture_content)
+        # Never through a link planted at the name (the capsule is untrusted).
+        replace_capsule_file(
+            capsule_dir,
+            OTEL_GENAI_SPANS_REF,
+            _json.dumps(spans, indent=2).encode("utf-8"),
+            operation="nova capture --emit-otel-genai",
+        )
+    except Exception as exc:  # noqa: BLE001 -- emission never fails the capture
+        print(
+            f"[novafabric] ⚠ OTel GenAI span emission failed (capsule is still valid): {exc}",
+            file=sys.stderr,
+        )
+        return None
+    return len(spans)
 
 
 # Re-exported under their historical names: callers and tests import them from
