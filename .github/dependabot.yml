@@ -46,9 +46,17 @@ updates:
         versions: [">=9.2"]
     open-pull-requests-limit: 10
 
-  # GitHub Actions used by the workflows in .github/workflows/.
+  # GitHub Actions used by the workflows in .github/workflows/ ("/") and by the
+  # repository's composite actions (.github/actions/<name>/action.yml). "/" alone
+  # does not reach a composite action, and the capture action's setup-uv pin had
+  # fallen a release behind the workflows' before the glob was added (#220).
+  # Every pin is a full commit SHA with a `# vX.Y.Z` comment; Dependabot rewrites
+  # both. tests/docs/test_build_inputs_are_pinned.py fails on a tag-pinned action
+  # and on a composite action this entry does not reach.
   - package-ecosystem: "github-actions"
-    directory: "/"
+    directories:
+      - "/"
+      - "/.github/actions/*"
     schedule:
       interval: "weekly"
       day: "monday"
