@@ -27,7 +27,9 @@ def doctor_cmd(
             "--check-storage",
             help=(
                 "Report backend name, schema version, migration status, "
-                "and row counts per table (ADR-0016)."
+                "and row counts per table (ADR-0016). Read-only: creates no "
+                "directory, database, or WAL/SHM file; a missing SQLite "
+                "database is reported as 'would be created on first use'."
             ),
         ),
     ] = False,
@@ -243,6 +245,16 @@ def _print_storage_report(info: StorageInfo) -> None:
 
     if info.db_path:
         summary.add_row("DB path", info.db_path)
+
+    if info.db_exists is False:
+        # Read-only check: say what first use would do instead of doing it.
+        summary.add_row(
+            "Status",
+            "[yellow]does not exist[/yellow] — would be created on first use "
+            "[dim](this check creates nothing)[/dim]",
+        )
+        console.print(summary)
+        return
 
     if info.schema_version is not None:
         summary.add_row("Schema version", str(info.schema_version))

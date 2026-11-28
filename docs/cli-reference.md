@@ -7564,6 +7564,10 @@ Without any flag, prints a hint and exits 0. With `--check-storage`:
 - Reports the active backend (`sqlite` or `postgres`).
 - Shows the Alembic schema version and migration status.
 - Prints per-table row counts.
+- Is read-only: it creates no directory, database file or `-wal`/`-shm` sidecar, and does
+  not switch the file's journal mode. An existing SQLite file is opened through a read-only
+  URI (the same one `--check-server` uses); a missing one is reported as
+  "does not exist — would be created on first use" and left uncreated.
 - Exits 0 on success, 1 on error.
 
 With `--check-scheduler` (**works today**, OQ-06 / PAR-ADR-003 condition 2): detects a
@@ -7601,7 +7605,7 @@ or the environment to have them checked.
 | Check | What it verifies | FAIL when |
 |---|---|---|
 | `server-extra` | `fastapi` and `uvicorn` are installed (looked up, not imported) | either is missing |
-| `config` | the YAML parses and validates with the server's loader, env overrides included | invalid, unreadable, or a `--server-config` file that does not exist (`nova server start --config` silently falls back to defaults in that case) |
+| `config` | the YAML parses and validates with the server's loader, env overrides included | invalid, unreadable, or a `--server-config` file that does not exist (`nova server start --config` refuses the same file) |
 | `data-dir`, `capsule-dir` | `$NOVAFABRIC_HOME` and the capsule store exist, are writable by you and are not world-writable | world-writable, not writable, or cannot be created (absent but creatable is WARN) |
 | `secret-files` | `.server-token`, the evidence signing key and the `NOVAFABRIC_OFFLINE_KEY_PATH` private key have no group/world permission bits | any of them does, or the offline key path names no file |
 | `database` | sqlite: the registry file's migration stamp; postgres: the DSN is reachable and the registry track is at head | the server would refuse to start (schema behind, ahead/foreign, or an empty Postgres), or Postgres is unreachable within 2 s |
@@ -8044,8 +8048,14 @@ The registry-track migration trees are packaged into the wheel
 (`novafabric/migrations/registry/`), so `--track registry` works from an
 installed package, not only a source checkout.
 
+**Requires the `server` extra.** Both tracks run alembic and SQLAlchemy, which ship in
+`pip install 'novafabric[server]'`, not in the base install. Without them the command
+exits `2` before touching any database, names the missing modules and prints that install
+command. Local mode does not need `nova db upgrade`: the local SQLite registry and
+MetadataStore create their own tables on first use.
+
 Exit codes: `0` = success, `1` = alembic/database failure (registry track),
-`2` = config/connection error.
+`2` = config/connection error, or the `server` extra is not installed.
 
 ---
 
@@ -8067,7 +8077,14 @@ nova server start --log-format json
 ```
 
 The server reads `~/.config/novafabric/server.yaml` by default; only `--config` points it
-elsewhere (there is no config-path environment variable). `NOVAFABRIC_SERVER_*` environment
+elsewhere (there is no config-path environment variable). The default file is optional:
+when it is absent the server uses built-in defaults plus the environment. A file named
+with `--config` is not optional: if it does not exist, is not a regular file, cannot be
+read, is not valid YAML, or is not a YAML mapping, the command exits `2` with an error that
+names the path (and, for YAML, only the line and column, never the file's content). The
+same rule, and exit code `2`, applies to `--config` on `nova server saml-metadata`,
+`nova server revoke-role`, `nova server usage` and `nova server scim-map-group --list`.
+`nova server scim-map-group` without `--list` edits the file and creates it when absent. `NOVAFABRIC_SERVER_*` environment
 variables override the file, and CLI flags override both. Secrets (`postgres_dsn`,
 `offline_key_path`, `scim_token`, `local_token`) are ignored in the YAML and come only from the
 environment (`NOVAFABRIC_POSTGRES_DSN`, `NOVAFABRIC_OFFLINE_KEY_PATH`, …). See [`docs/ops/server-deployment.md`](ops/server-deployment.md)
@@ -8083,7 +8100,7 @@ is pending a security review; until it lands, do not rely on organizations for
 capsule isolation.
 
 Options:
-- `--config, -c FILE` — path to server YAML config (default: `~/.config/novafabric/server.yaml`)
+- `--config, -c FILE` — path to server YAML config (default: `~/.config/novafabric/server.yaml`, optional). A path given here must be a readable YAML mapping, or the command exits `2`
 - `--backend TEXT` — `sqlite` (default) or `postgres`
 - `--host TEXT` — bind address (default from config or `127.0.0.1`)
 - `--port, -p INTEGER` — bind port (default from config or `7433`)

@@ -302,7 +302,7 @@ class TestServerStart:
                 enabled = False
 
         monkeypatch.setattr(
-            "novafabric.server.config.load_config", lambda c: _Cfg()
+            "novafabric.server.config.load_config", lambda c, **_kw: _Cfg()
         )
         monkeypatch.setattr(
             "novafabric.server.app.create_app", lambda cfg: object()
@@ -346,7 +346,7 @@ class TestServerStartWorkers:
     def test_workers_gt_one_requires_postgres(self, monkeypatch):
         monkeypatch.setattr(
             "novafabric.server.config.load_config",
-            lambda c: self._cfg("sqlite"),
+            lambda c, **_kw: self._cfg("sqlite"),
         )
         result = runner.invoke(app, ["server", "start", "--workers", "2"])
         assert result.exit_code == 2, result.output
@@ -355,7 +355,7 @@ class TestServerStartWorkers:
     def test_workers_gt_one_launches_factory(self, monkeypatch):
         monkeypatch.setattr(
             "novafabric.server.config.load_config",
-            lambda c: self._cfg("postgres"),
+            lambda c, **_kw: self._cfg("postgres"),
         )
         captured = {}
 

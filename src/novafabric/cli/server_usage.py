@@ -42,7 +42,7 @@ def _load(
     from novafabric.server.config import load_config
 
     try:
-        cfg = load_config(config)
+        cfg = load_config(config, strict=True)
     except Exception as exc:  # noqa: BLE001 — surfaced as a CLI error
         typer.echo(f"Invalid server config: {exc}", err=True)
         raise typer.Exit(code=2) from exc

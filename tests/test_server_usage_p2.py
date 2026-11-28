@@ -696,7 +696,11 @@ class TestSerialization:
 
 
 def _cli(*args: str, tmp: Path) -> Result:
-    return runner.invoke(app, ["server", "usage", *args, "--config", str(tmp / "no-such.yaml")])
+    # An explicit --config must exist; an empty file means defaults plus env.
+    cfg = tmp / "server.yaml"
+    if not cfg.exists():
+        cfg.write_text("")
+    return runner.invoke(app, ["server", "usage", *args, "--config", str(cfg)])
 
 
 class TestCli:
