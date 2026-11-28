@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
@@ -360,14 +361,29 @@ def test_verification_errors_are_capped(
 
 
 def test_no_tool_writes_anything(
-    tmp_path: Path, runs: Path, sealed: Callable[[Path, str], Path]
+    tmp_path: Path,
+    runs: Path,
+    sealed: Callable[[Path, str], Path],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     write_capsule(runs, "plain")
     sealed(runs, "signed")
     before = snapshot(tmp_path)
+    opened: list[object] = []
+    real_connect = sqlite3.connect
+
+    def recording_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+        opened.append(args[0] if args else kwargs.get("database"))
+        return real_connect(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(sqlite3, "connect", recording_connect)
     scope = EvidenceScope.from_paths([runs])
     scope.list_capsules()
     for name in ("plain", "signed"):
         scope.get_capsule_summary(name)
         scope.verify_capsule(name)
-    assert snapshot(tmp_path) == before
+    # Verification from the capsule alone opens no Merkle log or other database.
+    assert opened == []
+    after = snapshot(tmp_path)
+    assert not [p for p in after if p.endswith(("-wal", "-shm", "-journal"))]
+    assert after == before

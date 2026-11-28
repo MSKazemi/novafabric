@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
+import stat
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -73,11 +75,19 @@ def seal(capsule: Path, work: Path) -> None:
     manifest = yaml.safe_load((capsule / "capsule.yaml").read_text())
     manifest["evidence_digests"] = evidence_digests(capsule)
     (capsule / "capsule.yaml").write_text(yaml.safe_dump(manifest))
-    bundle = NovaSeal(
+    sealer = NovaSeal(
         config=KeyConfig(profile="local", key_path=str(key_path), cert_path=str(cert_path)),
         tsa_url="",
         db_path=str(work / f"{capsule.name}-merkle.db"),
-    ).seal(manifest)
+    )
+    try:
+        bundle = sealer.seal(manifest)
+    finally:
+        # Close the sealer's SQLite Merkle log now. Left to garbage collection,
+        # its close (a WAL checkpoint that grows the .db and removes -wal/-shm)
+        # lands at a random later moment, such as in the middle of a test that
+        # snapshots tmp_path to prove the server wrote nothing.
+        sealer._merkle.close()
     seal_dir = capsule / ".seal"
     seal_dir.mkdir()
     (seal_dir / "manifest.dsse").write_bytes(bundle.dsse_envelope)
@@ -105,10 +115,20 @@ def sealed(tmp_path: Path) -> Callable[[Path, str], Path]:
     return _make
 
 
-def snapshot(tree: Path) -> dict[str, tuple[int, int]]:
-    """``{relative path: (size, mtime_ns)}`` for every entry under *tree*, links unfollowed."""
-    out: dict[str, tuple[int, int]] = {}
+def snapshot(tree: Path) -> dict[str, tuple[str, int, int, str]]:
+    """``{relative path: (kind, size, mtime_ns, sha256)}`` for every entry under *tree*.
+
+    Links are not followed. Regular files are hashed, so a rewrite that keeps
+    the size and mtime is still seen.
+    """
+    out: dict[str, tuple[str, int, int, str]] = {}
     for path in sorted(tree.rglob("*")):
         st = path.lstat()
-        out[str(path.relative_to(tree))] = (st.st_size, st.st_mtime_ns)
+        if stat.S_ISREG(st.st_mode):
+            kind, digest = "file", hashlib.sha256(path.read_bytes()).hexdigest()
+        elif stat.S_ISDIR(st.st_mode):
+            kind, digest = "dir", ""
+        else:
+            kind, digest = "other", ""
+        out[str(path.relative_to(tree))] = (kind, st.st_size, st.st_mtime_ns, digest)
     return out
