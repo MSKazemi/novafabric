@@ -101,7 +101,7 @@ def test_no_surface_states_the_old_stream_name(rel: str) -> None:
         for n, line in enumerate(text.splitlines(), 1)
         if _OLD_STREAM_NAME.search(line)
         # The migration note names the old default on purpose.
-        and "before this release" not in line
+        and "the default changes" not in line
         and "relied on the old" not in line
         and "NOVA_NATS_STREAM=nova-evidence" not in line
     ]

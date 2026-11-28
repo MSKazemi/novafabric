@@ -6,9 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/confmap"
+	"go.opentelemetry.io/collector/featuregate"
 	"go.opentelemetry.io/collector/otelcol"
 	"go.opentelemetry.io/collector/service/telemetry"
 	"go.uber.org/zap"
@@ -153,5 +155,67 @@ func TestTelemetryLoggerHonoursLevel(t *testing.T) {
 	}
 	if !logger.Core().Enabled(zapcore.ErrorLevel) {
 		t.Error("error not enabled at level error")
+	}
+}
+
+// The documented smoke run: with the upstream service.AllowNoPipelines gate the
+// collector starts with the custom telemetry factory and shuts down cleanly.
+func TestCollectorStartsAndShutsDownWithNoPipelines(t *testing.T) {
+	const gate = "service.AllowNoPipelines"
+	if err := featuregate.GlobalRegistry().Set(gate, true); err != nil {
+		t.Fatalf("enable %s: %v", gate, err)
+	}
+	t.Cleanup(func() { _ = featuregate.GlobalRegistry().Set(gate, false) })
+	t.Setenv("HOME", t.TempDir()) // the processor's dev key store, if ever touched
+
+	cfgPath := filepath.Join(t.TempDir(), "collector.yaml")
+	const cfg = `processors:
+  novaseal_batch_signer:
+    fail_open: true
+service:
+  telemetry:
+    logs:
+      level: warn
+  pipelines: {}
+`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	set := testSettings(t)
+	set.ConfigProviderSettings.ResolverSettings.URIs = []string{cfgPath}
+	col, err := otelcol.NewCollector(set)
+	if err != nil {
+		t.Fatalf("NewCollector: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- col.Run(context.Background()) }()
+
+	deadline := time.Now().Add(20 * time.Second)
+	for col.GetState() != otelcol.StateRunning {
+		select {
+		case err := <-done:
+			t.Fatalf("collector exited before running: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			col.Shutdown()
+			t.Fatalf("collector not running after 20s (state %v)", col.GetState())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	col.Shutdown()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run returned %v after Shutdown", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("Run did not return within 20s of Shutdown")
+	}
+	if got := col.GetState(); got != otelcol.StateClosed {
+		t.Errorf("state after shutdown = %v, want Closed", got)
 	}
 }

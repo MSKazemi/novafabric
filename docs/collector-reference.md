@@ -67,8 +67,9 @@ release tag for the `collector/` module yet; you build them from a checkout.
 creates it, and `nova collector rebuild` and `NATSJetStreamConsumer` read it by default.
 The subject filter is `nova.evidence.>`. Change the forwarder's name with `--stream` or
 `NOVAFABRIC_SPOOL_STREAM`, and the consumers' with `--stream` or `NOVA_NATS_STREAM`; set
-both to the same value. Releases before this change defaulted the Python consumers to
-`nova-evidence`; if you created a stream by that name yourself and relied on the old
+both to the same value. Unreleased: up to v0.109.0 the Python consumers defaulted to
+`nova-evidence`, and the default changes to `NOVA_EVIDENCE` in the next release (see
+CHANGELOG `[Unreleased]`). If you created a stream by that name yourself and relied on the old
 default, set `NOVA_NATS_STREAM=nova-evidence`.
 
 ## Building
@@ -177,7 +178,8 @@ in config`; both exit `1`. The reference config in `deploy/k8s/configmap-collect
 fails the same way (`otlp`, `batch` and `kafka` are not built in, and
 `service::telemetry::metrics` is not accepted). For a smoke test of the config loader
 and the service lifecycle, the upstream feature gate `service.AllowNoPipelines` lets it
-start with no pipelines:
+start with no pipelines; a Go test (`TestCollectorStartsAndShutsDownWithNoPipelines`)
+starts and stops the collector this way:
 
 ```bash
 novafabric-collector --help
